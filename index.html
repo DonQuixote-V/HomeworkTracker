@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="th" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Homework Tracker — Dark</title>
+  <!-- Bootswatch Darkly + Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/darkly/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root{
+      --ok:#00ffae;         /* สีงานยังไม่เร่งด่วน */
+      --warn:#ffc107;       /* เหลือ ≤5 วัน */
+      --danger:#ff0033;     /* เหลือ ≤2 วัน หรือเลยกำหนด */
+      --muted:rgba(255,255,255,.15);
+    }
+    body{
+      background: radial-gradient(1200px 600px at 10% -10%, rgba(255,255,255,.06), transparent 60%),
+                  radial-gradient(800px 400px at 120% 10%, rgba(255,255,255,.04), transparent 50%),
+                  #0a0f14;
+      animation: bgMove 22s linear infinite alternate;
+    }
+    @keyframes bgMove{
+      0%{background-position:0 0,100% 0;}
+      100%{background-position:100% 100%,0 100%;}
+    }
+    .app-container{max-width:1100px}
+    .card{border-color:var(--muted)}
+    .deadline-pill{font-weight:600}
+    .table thead th{position:sticky; top:0; background:#0f1318; z-index:1}
+    .empty{opacity:.7; border:1px dashed var(--muted); border-radius:12px; padding:24px; text-align:center}
+    .pointer{cursor:pointer}
+
+    /* กรอบมน + เรืองแสงกระพริบทั้งแถว */
+    .row-glow{position:relative; border-radius:14px; overflow:visible}
+    .row-glow::before{
+      content:""; position:absolute; inset:6px; border-radius:14px;
+      border:2px solid var(--glow, var(--ok));
+      box-shadow:0 0 10px var(--glow, var(--ok)), 0 0 22px var(--glow, var(--ok));
+      filter:drop-shadow(0 0 8px var(--glow, var(--ok)));
+      animation:pulseGlow 1.5s ease-in-out infinite, rotateHue 10s linear infinite;
+      pointer-events:none;
+    }
+    tr.ok{--glow: var(--ok)}
+    tr.warn{--glow: var(--warn)}
+    tr.danger{--glow: var(--danger)}
+    @keyframes pulseGlow{
+      0%,100%{ opacity:1; box-shadow:0 0 8px var(--glow),0 0 18px var(--glow); }
+      50%{ opacity:.9; box-shadow:0 0 18px var(--glow),0 0 36px var(--glow); }
+    }
+    @keyframes rotateHue{0%{filter:hue-rotate(0)}100%{filter:hue-rotate(360deg)}}
+
+    /* ทำให้ดูโค้งมนทั้งแถวในตาราง */
+    #hwTable tbody tr td:first-child{ border-top-left-radius:14px; border-bottom-left-radius:14px }
+    #hwTable tbody tr td:last-child{ border-top-right-radius:14px; border-bottom-right-radius:14px }
+
+    .form-text.muted{opacity:.7}
+    .dlist datalist option{color:#000}
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom sticky-top">
+    <div class="container app-container">
+      <a class="navbar-brand fw-bold" href="#">Homework Tracker</a>
+      <div class="ms-auto d-flex gap-2">
+        <button id="exportBtn" class="btn btn-outline-light btn-sm" title="ส่งออกข้อมูล JSON">Export</button>
+        <label class="btn btn-outline-light btn-sm mb-0" title="นำเข้า JSON">
+          Import <input id="importInput" type="file" accept="application/json" hidden>
+        </label>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">Settings</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container app-container py-4">
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+      <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#taskModal" id="addBtn">
+        + เพิ่มการบ้าน
+      </button>
+      <div class="ms-auto d-flex flex-wrap gap-2">
+        <input id="searchInput" class="form-control" placeholder="ค้นหา คำในรายละเอียด/วิชา/ครู..." style="min-width:260px">
+        <select id="statusFilter" class="form-select" style="min-width:180px">
+          <option value="all">สถานะทั้งหมด</option>
+          <option value="doing">กำลังทำ</option>
+          <option value="todo">ไว้ก่อน</option>
+          <option value="done">เสร็จแล้ว</option>
+          <option value="overdue">เลยกำหนด</option>
+        </select>
+        <select id="sortSelect" class="form-select" style="min-width:220px">
+          <option value="due-asc">เรียงตามวันส่งใกล้→ไกล</option>
+          <option value="due-desc">เรียงตามวันส่งไกล→ใกล้</option>
+          <option value="created-desc">ล่าสุดก่อน</option>
+          <option value="created-asc">เก่าก่อน</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:70vh">
+          <table class="table table-hover align-middle mb-0" id="hwTable">
+            <thead>
+              <tr>
+                <th style="width:120px">สถานะ</th>
+                <th style="width:160px">วิชา</th>
+                <th>รายละเอียด</th>
+                <th style="width:160px">ครู</th>
+                <th style="width:160px">วันส่ง</th>
+                <th style="width:120px">เหลืออีก</th>
+                <th style="width:120px" class="text-end">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="hwBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="emptyState" class="empty mt-3" style="display:none">
+      ยังไม่มีการบ้าน ลองกด <span class="badge bg-success">+ เพิ่มการบ้าน</span> ดูสิ
+    </div>
+  </main>
+
+  <!-- Modal: Add/Edit Task -->
+  <div class="modal fade" id="taskModal" tabindex="-1">
+    <div class="modal-dialog">
+      <form class="modal-content" id="taskForm">
+        <div class="modal-header">
+          <h5 class="modal-title" id="taskModalTitle">เพิ่มการบ้าน</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="taskId">
+          <div class="mb-3 dlist">
+            <label class="form-label">วิชา</label>
+            <input list="subjects" class="form-control" id="subjectInput" required>
+            <datalist id="subjects"></datalist>
+            <div class="form-text muted">เพิ่ม/แก้รายการวิชาได้ใน Settings</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">วันส่ง</label>
+            <input type="date" class="form-control" id="dueInput" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">รายละเอียดงาน</label>
+            <textarea class="form-control" id="detailInput" rows="3" placeholder="เช่น รายงานบทที่ 3, ทำแบบฝึกหัด 1-10" required></textarea>
+          </div>
+          <div class="mb-3 dlist">
+            <label class="form-label">ชื่อครู</label>
+            <input list="teachers" class="form-control" id="teacherInput">
+            <datalist id="teachers"></datalist>
+          </div>
+          <div class="mb-1">
+            <label class="form-label">สถานะ</label>
+            <select class="form-select" id="statusInput">
+              <option value="doing">กำลังทำ</option>
+              <option value="todo">ไว้ก่อน</option>
+              <option value="done">เสร็จแล้ว</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+          <button type="submit" class="btn btn-primary">บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Settings (Manage Subjects & Teachers) -->
+  <div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Settings — วิชา & ชื่อครู</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h6 class="card-title">รายการวิชา</h6>
+                  <div class="input-group mb-2">
+                    <input id="newSubject" class="form-control" placeholder="เพิ่มชื่อวิชา">
+                    <button id="addSubject" class="btn btn-success">เพิ่ม</button>
+                  </div>
+                  <ul id="subjectList" class="list-group small"></ul>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h6 class="card-title">รายการครู</h6>
+                  <div class="input-group mb-2">
+                    <input id="newTeacher" class="form-control" placeholder="เพิ่มชื่อครู">
+                    <button id="addTeacher" class="btn btn-success">เพิ่ม</button>
+                  </div>
+                  <ul id="teacherList" class="list-group small"></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">ปิด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <template id="rowTemplate">
+    <tr class="row-glow">
+      <td>
+        <select class="form-select form-select-sm statusSelect">
+          <option value="doing">กำลังทำ</option>
+          <option value="todo">ไว้ก่อน</option>
+          <option value="done">เสร็จแล้ว</option>
+        </select>
+      </td>
+      <td class="subject"></td>
+      <td class="detail"></td>
+      <td class="teacher"></td>
+      <td class="due fw-semibold"></td>
+      <td class="remain"><span class="badge deadline-pill"></span></td>
+      <td class="text-end">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-light editBtn">แก้ไข</button>
+          <button class="btn btn-outline-danger delBtn">ลบ</button>
+        </div>
+      </td>
+    </tr>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+  // ===== Storage helpers =====
+  const LS_KEYS = {
+    items: 'hw_items_v1',
+    subjects: 'hw_subjects_v1',
+    teachers: 'hw_teachers_v1'
+  };
+  const load = (k, d)=>{ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch{ return d } };
+  const save = (k, v)=> localStorage.setItem(k, JSON.stringify(v));
+
+  // ===== State =====
+  let items = load(LS_KEYS.items, []);
+  let subjects = load(LS_KEYS.subjects, ["คณิต", "วิทย์", "ภาษาไทย", "ภาษาอังกฤษ"]);
+  let teachers = load(LS_KEYS.teachers, ["ครูเอ", "ครูบี"]);
+
+  // ===== Elements =====
+  const hwBody = document.getElementById('hwBody');
+  const emptyState = document.getElementById('emptyState');
+  const rowTpl = document.getElementById('rowTemplate');
+
+  const statusFilter = document.getElementById('statusFilter');
+  const sortSelect = document.getElementById('sortSelect');
+  const searchInput = document.getElementById('searchInput');
+
+  // Form elements
+  const taskModalEl = document.getElementById('taskModal');
+  const taskModal = new bootstrap.Modal(taskModalEl);
+  const taskForm = document.getElementById('taskForm');
+  const taskId = document.getElementById('taskId');
+  const subjectInput = document.getElementById('subjectInput');
+  const dueInput = document.getElementById('dueInput');
+  const detailInput = document.getElementById('detailInput');
+  const teacherInput = document.getElementById('teacherInput');
+  const statusInput = document.getElementById('statusInput');
+  const subjectsDl = document.getElementById('subjects');
+  const teachersDl = document.getElementById('teachers');
+
+  // Settings elements
+  const subjectList = document.getElementById('subjectList');
+  const teacherList = document.getElementById('teacherList');
+  const newSubject = document.getElementById('newSubject');
+  const newTeacher = document.getElementById('newTeacher');
+  const addSubject = document.getElementById('addSubject');
+  const addTeacher = document.getElementById('addTeacher');
+
+  // Export/Import
+  document.getElementById('exportBtn').addEventListener('click', ()=>{
+    const data = {items, subjects, teachers, exportedAt: new Date().toISOString()};
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'homework-tracker.json';
+    a.click();
+  });
+  document.getElementById('importInput').addEventListener('change', e=>{
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const data = JSON.parse(reader.result);
+        if(Array.isArray(data.items)) items = data.items; else throw 0;
+        if(Array.isArray(data.subjects)) subjects = data.subjects;
+        if(Array.isArray(data.teachers)) teachers = data.teachers;
+        persistAndRender();
+        alert('นำเข้าข้อมูลสำเร็จ');
+      }catch(err){
+        alert('ไฟล์ไม่ถูกต้อง');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // ===== Utils =====
+  const fmtDate = (str)=>{
+    const d = new Date(str+'T00:00:00');
+    if(Number.isNaN(d)) return '-';
+    return d.toLocaleDateString('th-TH', {year:'numeric', month:'short', day:'numeric'});
+  };
+  const daysLeft = (str)=>{
+    const today = new Date();
+    const due = new Date(str+'T23:59:59');
+    const ms = due - new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    return Math.ceil(ms / (1000*60*60*24));
+  };
+  const badgeFor = (dleft)=>{
+    if(dleft < 0) return {text:`เลยกำหนด ${Math.abs(dleft)} วัน`, cls:'bg-danger'};
+    if(dleft <= 2) return {text:`เหลือ ${dleft} วัน`, cls:'bg-danger'};
+    if(dleft <= 5) return {text:`เหลือ ${dleft} วัน`, cls:'bg-warning text-dark'};
+    return {text:`เหลือ ${dleft} วัน`, cls:'bg-success'};
+  };
+
+  function renderDatalists(){
+    subjectsDl.innerHTML = subjects.map(s=>`<option value="${s}"></option>`).join('');
+    teachersDl.innerHTML = teachers.map(t=>`<option value="${t}"></option>`).join('');
+  }
+
+  function renderSettings(){
+    subjectList.innerHTML = subjects.map((s,i)=>`
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span>${s}</span>
+        <button class="btn btn-outline-danger btn-sm" data-i="${i}" data-type="sub">ลบ</button>
+      </li>`).join('');
+    teacherList.innerHTML = teachers.map((t,i)=>`
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span>${t}</span>
+        <button class="btn btn-outline-danger btn-sm" data-i="${i}" data-type="tea">ลบ</button>
+      </li>`).join('');
+  }
+
+  function render(){
+    renderDatalists();
+    renderSettings();
+
+    // filters
+    let list = [...items];
+    const q = searchInput.value.trim().toLowerCase();
+    if(q){
+      list = list.filter(it =>
+        it.subject.toLowerCase().includes(q) ||
+        (it.teacher||'').toLowerCase().includes(q) ||
+        it.detail.toLowerCase().includes(q)
+      );
+    }
+    const f = statusFilter.value;
+    if(f !== 'all'){
+      if(f==='overdue') list = list.filter(it => daysLeft(it.due) < 0 && it.status !== 'done');
+      else list = list.filter(it => it.status === f);
+    }
+
+    // sort
+    const s = sortSelect.value;
+    list.sort((a,b)=>{
+      if(s==='due-asc') return a.due.localeCompare(b.due);
+      if(s==='due-desc') return b.due.localeCompare(a.due);
+      if(s==='created-asc') return (a.created||'').localeCompare(b.created||'');
+      if(s==='created-desc') return (b.created||'').localeCompare(a.created||'');
+      return 0;
+    });
+
+    hwBody.innerHTML = '';
+    if(list.length===0){ emptyState.style.display='block'; return }
+    emptyState.style.display='none';
+
+    for(const it of list){
+      const tr = rowTpl.content.firstElementChild.cloneNode(true);
+      const dleft = daysLeft(it.due);
+      const pill = badgeFor(dleft);
+      tr.querySelector('.subject').textContent = it.subject;
+      tr.querySelector('.detail').textContent = it.detail;
+      tr.querySelector('.teacher').textContent = it.teacher || '-';
+      tr.querySelector('.due').textContent = fmtDate(it.due);
+      const pillEl = tr.querySelector('.deadline-pill');
+      pillEl.textContent = pill.text;
+      pillEl.className = `badge deadline-pill ${pill.cls}`;
+
+      const statusSelect = tr.querySelector('.statusSelect');
+      statusSelect.value = it.status;
+      statusSelect.addEventListener('change', ()=>{
+        it.status = statusSelect.value; persistAndRender();
+      });
+
+      const cls = dleft < 0 || dleft <= 2 ? 'danger' : (dleft <= 5 ? 'warn' : 'ok');
+      tr.classList.add(cls);
+      tr.classList.add('row-glow');
+
+      // Buttons
+      tr.querySelector('.editBtn').addEventListener('click', ()=> openEdit(it.id));
+      tr.querySelector('.delBtn').addEventListener('click', ()=> delItem(it.id));
+
+      hwBody.appendChild(tr);
+    }
+  }
+
+  function persist(){
+    save(LS_KEYS.items, items);
+    save(LS_KEYS.subjects, subjects);
+    save(LS_KEYS.teachers, teachers);
+  }
+  function persistAndRender(){ persist(); render(); }
+
+  // ===== CRUD =====
+  function openCreate(){
+    taskForm.reset();
+    document.getElementById('taskModalTitle').textContent = 'เพิ่มการบ้าน';
+    taskId.value = '';
+    statusInput.value = 'doing';
+    // default: today + 3 days
+    const t = new Date(); t.setDate(t.getDate()+3);
+    dueInput.valueAsDate = t;
+    taskModal.show();
+  }
+  function openEdit(id){
+    const it = items.find(x=>x.id===id); if(!it) return;
+    document.getElementById('taskModalTitle').textContent = 'แก้ไขการบ้าน';
+    taskId.value = it.id;
+    subjectInput.value = it.subject;
+    dueInput.value = it.due;
+    detailInput.value = it.detail;
+    teacherInput.value = it.teacher||'';
+    statusInput.value = it.status;
+    taskModal.show();
+  }
+  function delItem(id){
+    if(!confirm('ลบการบ้านนี้?')) return;
+    items = items.filter(x=>x.id!==id);
+    persistAndRender();
+  }
+
+  taskForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const id = taskId.value || crypto.randomUUID();
+    const payload = {
+      id,
+      subject: subjectInput.value.trim(),
+      due: dueInput.value,
+      detail: detailInput.value.trim(),
+      teacher: teacherInput.value.trim(),
+      status: statusInput.value,
+      created: taskId.value ? items.find(x=>x.id===id)?.created : new Date().toISOString()
+    };
+    if(!payload.subject || !payload.due || !payload.detail){
+      alert('กรอกข้อมูลให้ครบ'); return;
+    }
+    const exist = items.find(x=>x.id===id);
+    if(exist){ Object.assign(exist, payload); }
+    else { items.push(payload); }
+
+    // auto add to settings lists
+    if(payload.subject && !subjects.includes(payload.subject)) subjects.push(payload.subject);
+    if(payload.teacher && !teachers.includes(payload.teacher)) teachers.push(payload.teacher);
+
+    taskModal.hide();
+    persistAndRender();
+  });
+
+  document.getElementById('addBtn').addEventListener('click', openCreate);
+
+  // Filters live
+  [statusFilter, sortSelect].forEach(el=> el.addEventListener('change', render));
+  searchInput.addEventListener('input', render);
+
+  // Settings handlers
+  addSubject.addEventListener('click', ()=>{
+    const v = newSubject.value.trim(); if(!v) return; if(!subjects.includes(v)) subjects.push(v);
+    newSubject.value=''; persistAndRender();
+  });
+  addTeacher.addEventListener('click', ()=>{
+    const v = newTeacher.value.trim(); if(!v) return; if(!teachers.includes(v)) teachers.push(v);
+    newTeacher.value=''; persistAndRender();
+  });
+  subjectList.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    const i = +btn.dataset.i; subjects.splice(i,1); persistAndRender();
+  });
+  teacherList.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    const i = +btn.dataset.i; teachers.splice(i,1); persistAndRender();
+  });
+
+  // Seed demo on first run
+  if(items.length===0){
+    const today = new Date();
+    const makeDue = d=>{const t=new Date(); t.setDate(today.getDate()+d); return t.toISOString().slice(0,10)};
+    items = [
+      {id:crypto.randomUUID(), subject:'คณิต', detail:'แบบฝึกหัด หน้า 45 ข้อ 1-10', teacher:'ครูเอ', due: makeDue(5), status:'doing', created:new Date().toISOString()},
+      {id:crypto.randomUUID(), subject:'วิทย์', detail:'รายงานบทที่ 3', teacher:'ครูบี', due: makeDue(2), status:'todo', created:new Date().toISOString()},
+      {id:crypto.randomUUID(), subject:'ภาษาอังกฤษ', detail:'เขียน essay 200 คำ', teacher:'ครูซี', due: makeDue(-1), status:'doing', created:new Date().toISOString()}
+    ];
+    persist();
+  }
+
+  // Initial render + re-render periodically (เผื่อเปิดค้างข้ามวัน)
+  render();
+  setInterval(()=>render(), 1000*60*30);
+  </script>
+</body>
+</html>
